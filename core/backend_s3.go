@@ -624,27 +624,57 @@ func (s *S3Backend) ListBlobs(param *ListBlobsInput) (*ListBlobsOutput, error) {
 		maxKeys = aws.Int64(int64(*param.MaxKeys))
 	}
 
-	resp, reqId, err := s.ListObjectsV2(&s3.ListObjectsV2Input{
+	in := &s3.ListObjectsV2Input{
 		Bucket:            &s.bucket,
 		Prefix:            param.Prefix,
 		Delimiter:         param.Delimiter,
 		MaxKeys:           maxKeys,
 		StartAfter:        param.StartAfter,
 		ContinuationToken: param.ContinuationToken,
-	})
+	}
+	// Ask S3 to percent-encode key-bearing fields in the list response (unless a
+	// caller already chose an encoding). Without this, S3 returns object keys raw
+	// in the XML body, and a key containing an XML-illegal byte (e.g. 0x0B) makes
+	// the Go XML decoder reject the whole response, which GeeseFS retries forever
+	// and the listing hangs. The V1 and ext-v1 fallbacks in ListObjectsV2 thread
+	// this EncodingType through, so this one line covers every list path.
+	if in.EncodingType == nil {
+		in.EncodingType = aws.String(s3.EncodingTypeUrl)
+	}
+
+	resp, reqId, err := s.ListObjectsV2(in)
 	if err != nil {
 		return nil, err
+	}
+
+	// aws-sdk-go v1 does NOT auto-decode url-encoded list keys, so decode them
+	// here or filenames come back percent-encoded. Only decode when the response
+	// confirms url encoding (a store that ignored encoding-type must not have its
+	// raw keys mangled), and fall back to the raw value on a decode error so an
+	// entry is never dropped and the listing never fails. url.PathUnescape (not
+	// QueryUnescape) is required: QueryUnescape turns '+' into a space and would
+	// corrupt keys.
+	urlEncoded := resp.EncodingType != nil && *resp.EncodingType == s3.EncodingTypeUrl
+	pathUnescape := func(s *string) *string {
+		if !urlEncoded || s == nil {
+			return s
+		}
+		decoded, err := url.PathUnescape(*s)
+		if err != nil {
+			return s
+		}
+		return &decoded
 	}
 
 	prefixes := make([]BlobPrefixOutput, 0)
 	items := make([]BlobItemOutput, 0)
 
 	for _, p := range resp.CommonPrefixes {
-		prefixes = append(prefixes, BlobPrefixOutput{Prefix: p.Prefix})
+		prefixes = append(prefixes, BlobPrefixOutput{Prefix: pathUnescape(p.Prefix)})
 	}
 	for _, i := range resp.Contents {
 		items = append(items, BlobItemOutput{
-			Key:          i.Key,
+			Key:          pathUnescape(i.Key),
 			ETag:         i.ETag,
 			LastModified: i.LastModified,
 			Size:         uint64(*i.Size),
@@ -656,7 +686,7 @@ func (s *S3Backend) ListBlobs(param *ListBlobsInput) (*ListBlobsOutput, error) {
 	return &ListBlobsOutput{
 		Prefixes:              prefixes,
 		Items:                 items,
-		NextContinuationToken: resp.NextContinuationToken,
+		NextContinuationToken: pathUnescape(resp.NextContinuationToken),
 		IsTruncated:           *resp.IsTruncated,
 		RequestId:             reqId,
 	}, nil
