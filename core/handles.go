@@ -455,9 +455,28 @@ func (inode *Inode) SetExpireLocked(tm time.Time) {
 	inode.mu.Unlock()
 }
 
+// An inode built from a listing has no user metadata on S3 backends that
+// don't return it in listings (AWS), so a symlink - always a 0-byte object
+// with the target in user metadata - would inflate as an empty regular file.
+// Only such objects can be symlinks, so only they pay a HEAD, once per inode.
+// LOCKS_REQUIRED(inode.mu)
+func (inode *Inode) mayBeUnfilledSymlink() bool {
+	return inode.dir == nil && inode.userMetadata == nil && inode.Attributes.Size == 0
+}
+
+// LOCKS_REQUIRED(inode.mu)
+func (inode *Inode) fillSymlinkAttr() {
+	if inode.mayBeUnfilledSymlink() {
+		if err := inode.fillXattr(); err != nil {
+			inode.logFuse("fillSymlinkAttr", err)
+		}
+	}
+}
+
 // LOCKS_EXCLUDED(inode.mu)
 func (inode *Inode) GetAttributes() *fuseops.InodeAttributes {
 	inode.mu.Lock()
+	inode.fillSymlinkAttr()
 	attr := inode.InflateAttributes()
 	inode.mu.Unlock()
 	return &attr

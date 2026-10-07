@@ -332,7 +332,7 @@ func (fs *GoofysFuse) LookUpInode(
 
 	inode.Ref()
 	op.Entry.Child = inode.Id
-	op.Entry.Attributes = inode.InflateAttributes()
+	op.Entry.Attributes = *inode.GetAttributes()
 	op.Entry.AttributesExpiration = time.Now().Add(fs.flags.StatCacheTTL)
 	op.Entry.EntryExpiration = op.Entry.AttributesExpiration
 	inode.SetExpireLocked(op.Entry.AttributesExpiration)
@@ -382,6 +382,9 @@ func makeDirEntry(inode *Inode, offset fuseops.DirOffset) fuseutil.Dirent {
 	dt := fuseutil.DT_File
 	if inode.isDir() {
 		dt = fuseutil.DT_Directory
+	} else if inode.mayBeUnfilledSymlink() {
+		// Unknown until LookUp HEADs it, so find/scandir fall back to lstat
+		dt = fuseutil.DT_Unknown
 	}
 	name := inode.Name
 	if offset == 0 {
@@ -435,19 +438,26 @@ func (fs *GoofysFuse) ReadDir(
 		if op.Plus {
 			var inodeEntry fuseops.ChildInodeEntry
 			e.mu.Lock()
-			inodeEntry.Child = e.Id
-			inodeEntry.Attributes = e.InflateAttributes()
-			inodeEntry.AttributesExpiration = time.Now().Add(fs.flags.StatCacheTTL)
-			inodeEntry.EntryExpiration = inodeEntry.AttributesExpiration
-			e.SetExpireTime(inodeEntry.AttributesExpiration)
+			// Child 0 tells the kernel to skip this entry's attributes, so a
+			// possible symlink gets a real LookUp (and HEAD) instead of being
+			// cached as a regular file, without a HEAD per listing
+			unfilled := e.mayBeUnfilledSymlink()
+			if !unfilled {
+				inodeEntry.Child = e.Id
+				inodeEntry.Attributes = e.InflateAttributes()
+				inodeEntry.AttributesExpiration = time.Now().Add(fs.flags.StatCacheTTL)
+				inodeEntry.EntryExpiration = inodeEntry.AttributesExpiration
+				e.SetExpireTime(inodeEntry.AttributesExpiration)
+			}
 			dirent = makeDirEntry(e, dh.lastExternalOffset)
 			e.mu.Unlock()
 			n = fuseutil.WriteDirentPlus(op.Dst[op.BytesRead:], &inodeEntry, dirent)
 			if n == 0 {
 				break
 			}
-			// readdirPlus will not increase nlookup for . and ..
-			if e != dh.inode && e != dh.inode.Parent {
+			// readdirPlus will not increase nlookup for . and .. (nor for
+			// entries sent without attributes)
+			if !unfilled && e != dh.inode && e != dh.inode.Parent {
 				e.Ref()
 			}
 		} else {
