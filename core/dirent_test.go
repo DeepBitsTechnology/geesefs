@@ -1,6 +1,8 @@
 package core
 
 import (
+	"sync"
+
 	"github.com/jacobsa/fuse/fuseutil"
 	. "gopkg.in/check.v1"
 
@@ -40,4 +42,29 @@ func (s *DirentTest) TestDirentTypeMatchesInflatedMode(t *C) {
 	// Not HEADed yet: unknown, so callers lstat it.
 	t.Assert(makeDirEntry(unfilled, 5).Type, Equals, fuseutil.DT_Unknown)
 	t.Assert(makeDirEntry(dir, 5).Type, Equals, fuseutil.DT_Directory)
+}
+
+// Cluster mode's readdir built dirents without the inode lock while a LookUp
+// could be filling userMetadata (fillXattr): a concurrent map read and write,
+// which the Go runtime aborts on. Run with -race.
+func (s *DirentTest) TestLockedDirEntryHoldsTheInodeLock(t *C) {
+	fs := &Goofys{flags: cfg.DefaultFlags()}
+	inode := direntInode(fs, 0, map[string][]byte{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			inode.mu.Lock()
+			inode.userMetadata[fs.flags.SymlinkAttr] = []byte("busybox")
+			delete(inode.userMetadata, fs.flags.SymlinkAttr)
+			inode.mu.Unlock()
+		}
+	}()
+	for i := 0; i < 2000; i++ {
+		_ = lockedDirEntry(inode, 5)
+	}
+	wg.Wait()
+	inode.userMetadata[fs.flags.SymlinkAttr] = []byte("busybox")
+	t.Assert(lockedDirEntry(inode, 5).Type, Equals, fuseutil.DT_Link)
 }

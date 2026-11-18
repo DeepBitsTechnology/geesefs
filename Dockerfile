@@ -1,6 +1,7 @@
 # Multi-stage build for the patched GeeseFS (encoding-type=url listing fix, see
 # DeepBits ADR-0007; symlinks surviving a remount, ADR-0008; readdir reporting
-# a known symlink as DT_LNK, deepbits.3). The final image is
+# a known symlink as DT_LNK, deepbits.3; readdir under the inode lock in
+# cluster mode, deepbits.4). The final image is
 # a tool image: other Dockerfiles
 # COPY the binary out of it, mirroring the ghcr.io/deepbitstechnology/rizin:release
 # convention. The binary lives at BOTH /geesefs and /usr/bin/geesefs.
@@ -25,7 +26,7 @@ RUN go mod download
 ENV CGO_ENABLED=0
 ENV GOOS=linux
 ENV GOARCH=amd64
-RUN go build -ldflags "-X main.Version=0.43.8-deepbits.3 -s -w" -o /geesefs .
+RUN go build -ldflags "-X main.Version=0.43.8-deepbits.4 -s -w" -o /geesefs .
 
 # Minimal final stage: just the patched binary at both COPY-able paths.
 FROM debian:stable-slim AS final

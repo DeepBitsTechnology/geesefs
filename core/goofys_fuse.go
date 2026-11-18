@@ -378,6 +378,15 @@ func (fs *GoofysFuse) OpenDir(
 	return
 }
 
+// LOCKS_EXCLUDED(inode.mu)
+func lockedDirEntry(inode *Inode, offset fuseops.DirOffset) fuseutil.Dirent {
+	inode.mu.Lock()
+	defer inode.mu.Unlock()
+	return makeDirEntry(inode, offset)
+}
+
+// It reads userMetadata, which a concurrent LookUp's HEAD writes (fillXattr).
+// LOCKS_REQUIRED(inode.mu)
 func makeDirEntry(inode *Inode, offset fuseops.DirOffset) fuseutil.Dirent {
 	dt := fuseutil.DT_File
 	if inode.isDir() {
@@ -465,9 +474,7 @@ func (fs *GoofysFuse) ReadDir(
 				e.Ref()
 			}
 		} else {
-			e.mu.Lock()
-			dirent = makeDirEntry(e, dh.lastExternalOffset)
-			e.mu.Unlock()
+			dirent = lockedDirEntry(e, dh.lastExternalOffset)
 			n = fuseutil.WriteDirent(op.Dst[op.BytesRead:], dirent)
 			if n == 0 {
 				break

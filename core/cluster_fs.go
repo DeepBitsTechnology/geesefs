@@ -425,7 +425,7 @@ func (fs *ClusterFs) readDir(handleId fuseops.HandleID, offset fuseops.DirOffset
 			break
 		}
 
-		n := fuseutil.WriteDirent(dst[*bytesRead:], makeDirEntry(e, dh.lastExternalOffset))
+		n := fuseutil.WriteDirent(dst[*bytesRead:], lockedDirEntry(e, dh.lastExternalOffset))
 		if n == 0 {
 			break
 		}
