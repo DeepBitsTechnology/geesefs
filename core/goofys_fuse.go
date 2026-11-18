@@ -382,6 +382,10 @@ func makeDirEntry(inode *Inode, offset fuseops.DirOffset) fuseutil.Dirent {
 	dt := fuseutil.DT_File
 	if inode.isDir() {
 		dt = fuseutil.DT_Directory
+	} else if inode.isSymlink() {
+		// GetAttr reports os.ModeSymlink for it; DT_File here made readdir and
+		// lstat disagree once the inode had been HEADed (DeepBits ADR-0008)
+		dt = fuseutil.DT_Link
 	} else if inode.mayBeUnfilledSymlink() {
 		// Unknown until LookUp HEADs it, so find/scandir fall back to lstat
 		dt = fuseutil.DT_Unknown

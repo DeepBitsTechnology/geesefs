@@ -332,7 +332,7 @@ func (inode *Inode) InflateAttributes() (attr fuseops.InodeAttributes) {
 	if inode.dir != nil {
 		attr.Nlink = 2
 		attr.Mode = attr.Mode&os.ModePerm | os.ModeDir
-	} else if inode.userMetadata != nil && inode.userMetadata[inode.fs.flags.SymlinkAttr] != nil {
+	} else if inode.isSymlink() {
 		attr.Nlink = 1
 		attr.Mode = attr.Mode&os.ModePerm | os.ModeSymlink
 	} else {
@@ -484,6 +484,13 @@ func (inode *Inode) GetAttributes() *fuseops.InodeAttributes {
 
 func (inode *Inode) isDir() bool {
 	return inode.dir != nil
+}
+
+// A symlink whose target is known: created here, or HEADed since it was listed.
+// The one test for it, so readdir's d_type and GetAttr's mode cannot disagree.
+// LOCKS_REQUIRED(inode.mu)
+func (inode *Inode) isSymlink() bool {
+	return inode.userMetadata != nil && inode.userMetadata[inode.fs.flags.SymlinkAttr] != nil
 }
 
 func RetryHeadBlob(flags *cfg.FlagStorage, cloud StorageBackend, req *HeadBlobInput) (resp *HeadBlobOutput, err error) {
