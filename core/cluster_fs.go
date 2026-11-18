@@ -417,7 +417,8 @@ func (fs *ClusterFs) readDir(handleId fuseops.HandleID, offset fuseops.DirOffset
 	for {
 		e, err := dh.ReadDir()
 		if err != nil {
-			dh.mu.Unlock()
+			// dh.mu is released by the defer above; unlocking here as well
+			// was a fatal "unlock of unlocked mutex"
 			err = mapAwsError(err)
 			return err
 		}
